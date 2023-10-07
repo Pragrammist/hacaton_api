@@ -1,52 +1,99 @@
-from pydantic import Field
-from fastapi import Body, FastAPI, Query, Response
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
-from fastapi import status
-from pydantic import BaseModel
-from influxdb_client_3  import InfluxDBClient3, Point
+from fastapi import FastAPI, WebSocket
+import influxdb_client, os
+from influxdb_client import InfluxDBClient, Point
+from influxdb_client.client.write_api import SYNCHRONOUS
+from fastapi.middleware.cors import CORSMiddleware
+import os
 
-client = InfluxDBClient3(token="my-super-secret-auth-token",
-                         host="http://62.109.26.57:8086",
-                         org="my-org",
-                         database="my-bucket",
-                         )
 
-point = Point("measurement").tag("location", "london").field("temperature", 42)
-client.write(point)
+
+class DictObj:
+    def __init__(self, in_dict: dict):
+        assert isinstance(in_dict, dict)
+        for key, val in in_dict.items():
+            if isinstance(val, (list, tuple)):
+               setattr(self, key, [DictObj(x) if isinstance(x, dict) else x for x in val])
+            else:
+               setattr(self, key, DictObj(val) if isinstance(val, dict) else val)
+
+class ReadDataRepo:
+    
+    def __init__(self, client:InfluxDBClient, bucket:str):
+        self.query_api = client.query_api()
+        self.bucket = bucket
+    def read_temperature(self, timestamp):
+
+        
+        query = """from(bucket: "sensors")
+        |> range(start: """ + timestamp + """)
+        """
+        tables = self.query_api.query(query, org="my-org")
+        metricsData = self.__readTable(tables);
+        return metricsData;
+    def __readTable(self, tables):
+        records = []
+        for t in tables:
+            record = t.records
+            valuesAsDict = record[0].values
+            my_obj = DictObj(valuesAsDict)
+            records.append(my_obj)
+        return record;
+
+
+
+
+
+
+
 
 
 app = FastAPI()
 
-class Person(BaseModel):
-    name: str = Field(default="Undefined", min_length=3, max_length=20)
-    age: int= Field(default=18, ge=18, lt=111)
+originsEnvValue = os.getenv("ORIGIGINS", "*")
+
+
+origins = originsEnvValue.split(";")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 
+token = os.getenv("INFLUX_TOKEN", "my-super-secret-auth-token") 
+org = os.getenv("INFLUX_ORG", "my-org")
+url = os.getenv("INFLUX_URL", "http://62.109.26.57:8086") 
+bucket = os.getenv("INFLUX_BUCKET", "sensors")
 
-@app.get("/msg/{text}", response_class=JSONResponse, status_code=status.HTTP_200_OK)
-def root(response: Response,
-    text:str, text2:str = Query(min_length=3)):
-    if(text2 == None):
-        response.status_code = 400;
-        response.charset = "not inited" 
-    return {"message": text, "mes3": text2}
+client = influxdb_client.InfluxDBClient(url=url, token=token, org=org)
+repo = ReadDataRepo(client, bucket=bucket)
 
-@app.get("/old", response_class=RedirectResponse)
+query_api = client.query_api()
+write_api = client.write_api(write_options=SYNCHRONOUS)
 
 
-def redirect():
-    point = Point("measurement").tag("location", "london").field("temperature", 42)
-    client.write(point)
-    client.query();
-    return "/"
+@app.get("/api/get")
+async def root(timestamp: str):
+    return repo.read_temperature(timestamp)
 
-@app.get("/", response_class=FileResponse)
-def public():
-    return "public/index.html"
 
-@app.post("/hello")
-def hello(data = Body()):
-    name = data["name"]
-    age = data["age"]
-    return {"message": f"{name}, ваш возраст - {age}"}
+@app.post("/api/set")
+async def set_data(sensor_id: int, temperature: float, humidity: float):
+    bucket = "sensors"
+    point = (
+        Point("temperature_sensor").tag("temperature", temperature).tag("humidity", humidity).field("id", sensor_id)
+    )
+    return write_api.write(bucket=bucket, org=org, record=point)
+
+
+@app.websocket("/get/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        t = await websocket.receive_text()
+        await websocket.send_json(repo.read_temperature(t))
+
