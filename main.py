@@ -1,10 +1,11 @@
+import time
 from fastapi import FastAPI, WebSocket
 import influxdb_client, os
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
 from fastapi.middleware.cors import CORSMiddleware
 import os
-
+import json
 
 
 class DictObj:
@@ -22,23 +23,34 @@ class ReadDataRepo:
         self.query_api = client.query_api()
         self.bucket = bucket
         self.org = org
-    def read_temperature(self, timestamp):
 
-        
+    def read_avg(self):
+        query = """from(bucket: "sensors")
+        |> range(start: -24d)
+        |> timedMovingAverage(every: 5m, period: 10m)
+        """
+        qRes = self.query_api.query(query, org=self.org)
+        return self.__readTableForCurrentData(qRes)
+    
+
+    def read_sensor_data(self, timestamp):
         query = """from(bucket: "sensors")
         |> range(start: """ + timestamp + """)
         """
         tables = self.query_api.query(query, org=self.org)
-        metricsData = self.__readTable(tables);
+        metricsData = self.__readTableForCurrentData(tables);
         return metricsData;
-    def __readTable(self, tables):
+    def __readTableForCurrentData(self, tables):
         records = []
         for t in tables:
-            record = t.records
-            valuesAsDict = record[0].values
-            my_obj = DictObj(valuesAsDict)
-            records.append(my_obj)
-        return record;
+            record = t.records[0]
+            
+            valuesAsDict = record.values
+            data = {'time': valuesAsDict["_time"].time().strftime("%H:%M:%S:%M"), "humidity": valuesAsDict['humidity'],
+                        "temperature": valuesAsDict["temperature"]}
+            records.append(data)
+        return records;
+    
 
 
 
@@ -78,8 +90,9 @@ write_api = client.write_api(write_options=SYNCHRONOUS)
 
 
 @app.get("/api/get")
-async def root(timestamp: str):
-    return repo.read_temperature(timestamp)
+async def root():
+    data = repo.read_avg()
+    return data
 
 
 @app.post("/api/set")
@@ -95,6 +108,7 @@ async def set_data(sensor_id: int, temperature: float, humidity: float):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     while True:
-        #t = await websocket.receive_text()
-        await websocket.send_json(repo.read_temperature("-10m"))
+        data = repo.read_sensor_data("-5s")
+        await websocket.send_text(str(data))
+        time.sleep(5)
 
