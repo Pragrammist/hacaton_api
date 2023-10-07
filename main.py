@@ -71,7 +71,7 @@ url = os.getenv("INFLUX_URL", "http://62.109.26.57:8086")
 bucket = os.getenv("INFLUX_BUCKET", "sensors")
 
 client = influxdb_client.InfluxDBClient(url=url, token=token, org=org)
-repo = ReadDataRepo(client, bucket=bucket)
+repo = ReadDataRepo(client, bucket=bucket, org=org)
 
 query_api = client.query_api()
 write_api = client.write_api(write_options=SYNCHRONOUS)
