@@ -95,6 +95,6 @@ async def set_data(sensor_id: int, temperature: float, humidity: float):
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     while True:
-        t = await websocket.receive_text()
-        await websocket.send_json(repo.read_temperature(t))
+        #t = await websocket.receive_text()
+        await websocket.send_json(repo.read_temperature("-10m"))
 
