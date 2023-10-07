@@ -18,16 +18,17 @@ class DictObj:
 
 class ReadDataRepo:
     
-    def __init__(self, client:InfluxDBClient, bucket:str):
+    def __init__(self, client:InfluxDBClient, bucket:str, org:str):
         self.query_api = client.query_api()
         self.bucket = bucket
+        self.org = org
     def read_temperature(self, timestamp):
 
         
         query = """from(bucket: "sensors")
         |> range(start: """ + timestamp + """)
         """
-        tables = self.query_api.query(query, org="my-org")
+        tables = self.query_api.query(query, org=self.org)
         metricsData = self.__readTable(tables);
         return metricsData;
     def __readTable(self, tables):
